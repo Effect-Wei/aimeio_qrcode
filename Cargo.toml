@@ -1,0 +1,13 @@
+[package]
+name = "aimeio_qrcode"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+image = "0.25.10"
+minifb = "0.28.0"
+nokhwa = { version = "0.10.10", features = ["input-native", "output-threaded"] }
+rqrr = "0.10.1"
