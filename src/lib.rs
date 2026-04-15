@@ -58,7 +58,7 @@ pub struct AimeIoVfdState {
 /* =========================== 内部功能函数 ============================ */
 /* ========================================================================= */
 
-fn enumerate_cameras() -> () {
+fn enumerate_cameras() {
     let cameras = match query(ApiBackend::Auto) {
         Ok(c) => c,
         Err(e) => {
@@ -160,6 +160,8 @@ fn init_camera_thread() {
                             let found_id: Option<[u8; 10]> = scanner.decode_qr(&frame, &mut window);
 
                             if let Some(id) = found_id {
+                                absent_count = 0;
+
                                 // 获取写锁更新结果
                                 if let Ok(mut res) = AIME_RESULT.write() {
                                     res.aime_id = id;
