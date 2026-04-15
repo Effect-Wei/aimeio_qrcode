@@ -22,12 +22,15 @@ use nokhwa::utils::{
 };
 use nokhwa::{Camera, query};
 
+const CAM_WIDTH: u32 = 640;
+const CAM_HEIGHT: u32 = 480;
 const FPS: u32 = 30;
 const MAX_ERRORS: u32 = 10;
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 static LIST_CAMERAS: AtomicBool = AtomicBool::new(false);
 static RADIO_ON: AtomicBool = AtomicBool::new(true);
 static SHOW_WINDOW: AtomicBool = AtomicBool::new(false);
+static SHOW_WINDOW_FROM_LED: AtomicBool = AtomicBool::new(false);
 static CAM_ID: AtomicI32 = AtomicI32::new(0);
 
 struct AimeResult {
@@ -92,9 +95,12 @@ fn init_camera(index: i32) -> Result<Camera, String> {
     // 2. 配置请求格式：
     // 我们指定 640x480 分辨率，最高帧率。
     // 这对于二维码扫描来说既清晰又轻量。
-    let requested = RequestedFormat::new::<LumaFormat>(RequestedFormatType::Closest(
-        CameraFormat::new(Resolution::new(640, 480), FrameFormat::YUYV, FPS),
-    ));
+    let requested =
+        RequestedFormat::new::<LumaFormat>(RequestedFormatType::Closest(CameraFormat::new(
+            Resolution::new(CAM_WIDTH, CAM_HEIGHT),
+            FrameFormat::YUYV,
+            FPS,
+        )));
 
     // 3. 创建摄像头实例
     // 可以在这里指定后端 API。如果你只针对 Windows，可以指定 ApiBackend::MSMF
@@ -109,17 +115,36 @@ fn init_camera(index: i32) -> Result<Camera, String> {
     Ok(camera)
 }
 
+fn should_show_window() -> bool {
+    SHOW_WINDOW.load(Ordering::SeqCst) || SHOW_WINDOW_FROM_LED.load(Ordering::SeqCst)
+}
+
+fn sync_debug_window(window: &mut Option<DebugWindow>) {
+    let is_open = matches!(window.as_ref(), Some(w) if w.is_open());
+    if should_show_window() {
+        if !is_open {
+            *window = DebugWindow::new(CAM_WIDTH as usize, CAM_HEIGHT as usize, FPS as usize);
+        }
+    } else if window.is_some() {
+        *window = None;
+    }
+}
+
+fn is_white_led(r: u8, g: u8, b: u8) -> bool {
+    r > 0 && r == g && g == b
+}
+
 fn init_camera_thread() {
     // 计算每帧应该消耗的时间（例如 10fps -> 100ms 每帧）
     let frame_duration = Duration::from_secs_f32(1.0 / FPS as f32);
 
     thread::spawn(move || {
-        let mut window = if SHOW_WINDOW.load(Ordering::SeqCst) {
-            DebugWindow::new(640, 480, FPS as usize)
+        let mut window = if should_show_window() {
+            DebugWindow::new(CAM_WIDTH as usize, CAM_HEIGHT as usize, FPS as usize)
         } else {
             None
         };
-        let mut scanner = QrScanner::new(640, 480, FPS as f64);
+        let mut scanner = QrScanner::new(CAM_WIDTH, CAM_HEIGHT, FPS as f64);
 
         // --- 外层循环：负责重连 ---
         loop {
@@ -147,6 +172,7 @@ fn init_camera_thread() {
                 }
 
                 let loop_start = Instant::now();
+                sync_debug_window(&mut window);
 
                 // 1. 尝试获取一帧
                 let frame_result = camera.frame();
@@ -177,6 +203,8 @@ fn init_camera_thread() {
                                     }
                                 }
                             }
+                        } else if should_show_window() {
+                            let _ = scanner.decode_qr(&frame, &mut window);
                         } else {
                             // 如果扫描停止，也清除 present 状态
                             if let Ok(mut res) = AIME_RESULT.write() {
@@ -252,6 +280,10 @@ pub extern "C" fn aime_io_nfc_poll(_unit_no: u8) -> HRESULT {
         let _ = INI.write().unwrap().reload();
         CAM_ID.store(
             INI.read().unwrap().get_int("aimeio", "camId", 0),
+            Ordering::SeqCst,
+        );
+        SHOW_WINDOW.store(
+            INI.read().unwrap().get_int("aimeio", "showWindow", 0) == 1,
             Ordering::SeqCst,
         );
         println!(
@@ -391,7 +423,9 @@ pub unsafe extern "C" fn aime_io_nfc_send_hex_data(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn aime_io_led_set_color(_unit_no: u8, _r: u8, _g: u8, _b: u8) {}
+pub extern "C" fn aime_io_led_set_color(_unit_no: u8, r: u8, g: u8, b: u8) {
+    SHOW_WINDOW_FROM_LED.store(is_white_led(r, g, b), Ordering::SeqCst);
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aime_io_vfd_set_text(

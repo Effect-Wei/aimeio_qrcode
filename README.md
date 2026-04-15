@@ -36,6 +36,8 @@ camId=1
 ;列出系统识别到的每一个摄像头
 listCameras=0
 ;创建一个显示摄像头画面的窗口
+;同时在游戏调用 aime_io_led_set_color 且灯色为白色时，
+;也会自动临时显示该窗口
 showWindow=1
 ```
 
