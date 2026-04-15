@@ -11,7 +11,7 @@ pub struct QrScanner {
     width: u32,
     height: u32,
     luma_buffer: Vec<u8>,      // 预分配的灰度缓冲区
-    debug_buffer: Vec<u32>,    // 预分配的 Debug 窗口 ARGB 缓冲区
+    debug_buffer: Vec<u32>,    // 预分配的 Debug 窗口 0RGB 缓冲区
     last_decode: Instant,      // 上次解码时间
     decode_interval: Duration, // 解码时间间隔 (用于降频)
 }
@@ -44,7 +44,7 @@ impl QrScanner {
     }
 
     /// 高速通道：处理 YUYV 帧
-    pub fn decode_qr_yuyv(
+    fn decode_qr_yuyv(
         &mut self,
         frame: &nokhwa::Buffer,
         window: &mut Option<DebugWindow>,
@@ -64,33 +64,51 @@ impl QrScanner {
             return None;
         }
 
-        // 优化 3：抛弃 step_by(2) 并避免 collect 分配，使用 chunks_exact 直接覆盖预分配内存
-        // YUYV 的排列为[Y0, U0, Y1, V0]... 每次取 2 个字节，第 0 个字节即为 Y 亮度
-        for (src, dst) in yuyv_buffer.chunks_exact(2).zip(self.luma_buffer.iter_mut()) {
-            *dst = src[0];
+        let show_debug = self.prepare_debug_window(window);
+
+        // YUYV 的排列为 [Y0, U, Y1, V]。这里同时生成解码所需的灰度图和 debug 窗口所需的彩色图。
+        for (i, src) in yuyv_buffer.chunks_exact(4).enumerate() {
+            let y0 = src[0];
+            let u = src[1];
+            let y1 = src[2];
+            let v = src[3];
+            let pixel_index = i * 2;
+
+            self.luma_buffer[pixel_index] = y0;
+            self.luma_buffer[pixel_index + 1] = y1;
+
+            if show_debug {
+                self.debug_buffer[pixel_index] = yuv_to_rgb0(y0, u, v);
+                self.debug_buffer[pixel_index + 1] = yuv_to_rgb0(y1, u, v);
+            }
         }
 
         self.process_luma_and_detect(window)
     }
 
     /// 慢速通道：Fallback 转换
-    pub fn decode_qr_fallback(
+    fn decode_qr_fallback(
         &mut self,
         frame: &nokhwa::Buffer,
         window: &mut Option<DebugWindow>,
     ) -> Option<[u8; 10]> {
+        let show_debug = self.prepare_debug_window(window);
         let rgb_img = frame
             .decode_image::<RgbFormat>()
             .unwrap_or_else(|_| ImageBuffer::new(self.width, self.height));
 
-        // 优化 3：使用 chunks_exact 遍历 RGB，直接复用 luma_buffer
-        for (src, dst) in rgb_img
-            .as_raw()
-            .chunks_exact(3)
-            .zip(self.luma_buffer.iter_mut())
-        {
-            // 标准灰度计算。如果在超低端 CPU 上，可以直接用绿色通道代替灰度: *dst = src[1];
-            *dst = ((src[0] as u16 * 77 + src[1] as u16 * 150 + src[2] as u16 * 29) >> 8) as u8;
+        // 遍历 RGB 数据，同时准备灰度识别输入和用于显示的彩色缓冲。
+        for (i, src) in rgb_img.as_raw().chunks_exact(3).enumerate() {
+            let r = src[0];
+            let g = src[1];
+            let b = src[2];
+
+            // 标准灰度计算。如果在超低端 CPU 上，可以直接用绿色通道代替灰度。
+            self.luma_buffer[i] = ((r as u16 * 77 + g as u16 * 150 + b as u16 * 29) >> 8) as u8;
+
+            if show_debug {
+                self.debug_buffer[i] = rgb_to_rgb0(r, g, b);
+            }
         }
 
         self.process_luma_and_detect(window)
@@ -98,21 +116,7 @@ impl QrScanner {
 
     /// 内部核心逻辑：降频解码 + Debug 渲染
     fn process_luma_and_detect(&mut self, window: &mut Option<DebugWindow>) -> Option<[u8; 10]> {
-        let mut update_window = false;
-
-        // 1. 如果有窗口，生成 ARGB 像素 (只更新内存，无需新分配)
-        if let Some(w) = window.as_mut() {
-            if w.is_open() {
-                update_window = true;
-                // 优化 3：利用 zip 完美向量化，替代原先的 iter().map().collect()
-                for (src, dst) in self.luma_buffer.iter().zip(self.debug_buffer.iter_mut()) {
-                    let y = *src as u32;
-                    *dst = (255 << 24) | (y << 16) | (y << 8) | y;
-                }
-            } else {
-                *window = None; // 窗口已关闭，清理句柄
-            }
-        }
+        let update_window = matches!(window.as_ref(), Some(w) if w.is_open());
 
         let mut found_id = None;
 
@@ -136,7 +140,7 @@ impl QrScanner {
                     // 绘制 Debug 边框
                     if update_window {
                         let [p0, p1, p2, p3] = grid.bounds;
-                        let color = 0xFF00FF00; // 绿色
+                        let color = 0x0000FF00; // 绿色，minifb 使用 0RGB 编码
                         debug_window::draw_square(
                             &mut self.debug_buffer,
                             self.width,
@@ -172,6 +176,18 @@ impl QrScanner {
 
         found_id
     }
+
+    fn prepare_debug_window(&mut self, window: &mut Option<DebugWindow>) -> bool {
+        if let Some(w) = window.as_mut() {
+            if w.is_open() {
+                return true;
+            }
+
+            *window = None;
+        }
+
+        false
+    }
 }
 
 /* ----- 辅助函数 ----- */
@@ -201,4 +217,27 @@ fn hex_char_to_val(c: u8) -> Option<u8> {
         b'A'..=b'F' => Some(c - b'A' + 10),
         _ => None,
     }
+}
+
+#[inline(always)]
+fn rgb_to_rgb0(r: u8, g: u8, b: u8) -> u32 {
+    ((r as u32) << 16) | ((g as u32) << 8) | b as u32
+}
+
+#[inline(always)]
+fn yuv_to_rgb0(y: u8, u: u8, v: u8) -> u32 {
+    let c = y as i32 - 16;
+    let d = u as i32 - 128;
+    let e = v as i32 - 128;
+
+    let r = clamp_u8((298 * c + 409 * e + 128) >> 8);
+    let g = clamp_u8((298 * c - 100 * d - 208 * e + 128) >> 8);
+    let b = clamp_u8((298 * c + 516 * d + 128) >> 8);
+
+    rgb_to_rgb0(r, g, b)
+}
+
+#[inline(always)]
+fn clamp_u8(value: i32) -> u8 {
+    value.clamp(0, 255) as u8
 }
