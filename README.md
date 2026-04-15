@@ -38,3 +38,65 @@ listCameras=0
 ;创建一个显示摄像头画面的窗口
 showWindow=1
 ```
+
+---
+
+## 🧪 DLL 本地测试工具
+
+仓库内附带了一个临时测试用的小工具：`dll_tester`。  
+它的用途是脱离游戏或 Sbgatools 宿主，直接在命令行里加载本项目编译出的 DLL，并循环读取当前识别到的 Aime ID，方便单独排查：
+
+* DLL 是否能正常加载
+* `aime_io_init` 是否成功
+* 摄像头和二维码识别链路是否工作
+* `aime_io_nfc_get_aime_id` 是否能稳定返回结果
+
+### 编译 tester
+
+```bash
+cargo build --bin dll_tester
+```
+
+### 最常用的启动方式
+
+```bash
+cargo run --bin dll_tester -- --cam-id 0 --show-window
+```
+
+这条命令会：
+
+* 加载当前 Debug 构建目录下的 `aimeio_qrcode.dll`
+* 自动生成一个临时 `segatools.ini`
+* 调用 `aime_io_init`
+* 打开调试窗口
+* 持续读取并打印识别到的 Aime ID
+
+### 指定 DLL 路径
+
+如果你想显式指定某个 DLL 文件，可以这样运行：
+
+```bash
+cargo run --bin dll_tester -- --dll .\target\debug\aimeio_qrcode.dll --cam-id 0 --show-window
+```
+
+### 常用参数
+
+* `--dll <path>`：指定要加载的 DLL 路径
+* `--cam-id <id>`：写入临时配置文件中的摄像头 ID
+* `--show-window`：打开调试窗口，显示摄像头画面
+* `--list-cameras`：初始化时让 DLL 打印系统识别到的摄像头
+* `--unit <id>`：指定传给 NFC 接口的 unit 编号，默认是 `0`
+* `--interval-ms <ms>`：设置读取 Aime ID 的轮询间隔，默认是 `200`
+* `--poll-ms <ms>`：定期调用 `aime_io_nfc_poll`，适合测试配置热更新路径
+
+### 查看帮助
+
+```bash
+cargo run --bin dll_tester -- --help
+```
+
+### 注意事项
+
+* `dll_tester` 仅用于本地调试，不是正式宿主程序。
+* 如果 `cargo build` 报告无法覆盖 `aimeio_qrcode.dll`，通常是旧 DLL 仍被某个进程占用，需要先关闭对应进程。
+* 该工具会把 `SEGATOOLS_CONFIG_PATH` 指向一个临时生成的配置文件，因此不会依赖你当前目录下已有的 `segatools.ini`。
