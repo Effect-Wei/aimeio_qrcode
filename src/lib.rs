@@ -23,7 +23,7 @@ use nokhwa::utils::{
 use nokhwa::{Camera, query};
 
 const FPS: u32 = 30;
-const MAX_ERRORS: u8 = 10;
+const MAX_ERRORS: u32 = 10;
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 static LIST_CAMERAS: AtomicBool = AtomicBool::new(false);
 static RADIO_ON: AtomicBool = AtomicBool::new(true);
@@ -124,8 +124,8 @@ fn init_camera_thread() {
         // --- 外层循环：负责重连 ---
         loop {
             let current_cam_id = CAM_ID.load(Ordering::SeqCst);
-            let mut error_count = 0;
-            let mut absent_count = 0;
+            let mut error_count: u32 = 0;
+            let mut absent_count: u32 = 0;
 
             let mut camera = match init_camera(current_cam_id) {
                 Ok(c) => c,
@@ -169,7 +169,7 @@ fn init_camera_thread() {
                                 }
                             } else {
                                 // 如果没扫到，根据逻辑清除 present 状态
-                                absent_count += 1;
+                                absent_count = absent_count.saturating_add(1);
                                 if absent_count >= MAX_ERRORS {
                                     if let Ok(mut res) = AIME_RESULT.write() {
                                         res.aime_id = [0; 10];
