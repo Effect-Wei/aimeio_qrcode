@@ -144,3 +144,17 @@ pub fn draw_line(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::scale_buffer_nearest;
+
+    #[test]
+    fn scale_buffer_nearest_expands_pixels() {
+        let src = [1u32, 2, 3, 4];
+        let mut dst = [0u32; 16];
+        scale_buffer_nearest(&src, 2, 2, &mut dst, 4, 4);
+
+        assert_eq!(dst, [1, 1, 2, 2, 1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 4, 4,]);
+    }
+}

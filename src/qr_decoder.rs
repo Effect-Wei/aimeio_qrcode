@@ -34,12 +34,12 @@ impl QrScanner {
     pub fn decode_qr(
         &mut self,
         frame: &nokhwa::Buffer,
-        window: &mut Option<DebugWindow>,
+        windows: &mut Vec<DebugWindow>,
     ) -> Option<[u8; 10]> {
         if frame.source_frame_format() == FrameFormat::YUYV {
-            self.decode_qr_yuyv(frame, window)
+            self.decode_qr_yuyv(frame, windows)
         } else {
-            self.decode_qr_fallback(frame, window)
+            self.decode_qr_fallback(frame, windows)
         }
     }
 
@@ -47,7 +47,7 @@ impl QrScanner {
     fn decode_qr_yuyv(
         &mut self,
         frame: &nokhwa::Buffer,
-        window: &mut Option<DebugWindow>,
+        windows: &mut Vec<DebugWindow>,
     ) -> Option<[u8; 10]> {
         let yuyv_buffer = frame.buffer();
         let format = frame.source_frame_format();
@@ -64,7 +64,7 @@ impl QrScanner {
             return None;
         }
 
-        let show_debug = self.prepare_debug_window(window);
+        let show_debug = self.prepare_debug_windows(windows);
 
         // YUYV 的排列为 [Y0, U, Y1, V]。这里同时生成解码所需的灰度图和 debug 窗口所需的彩色图。
         for (i, src) in yuyv_buffer.chunks_exact(4).enumerate() {
@@ -83,16 +83,16 @@ impl QrScanner {
             }
         }
 
-        self.process_luma_and_detect(window)
+        self.process_luma_and_detect(windows)
     }
 
     /// 慢速通道：Fallback 转换
     fn decode_qr_fallback(
         &mut self,
         frame: &nokhwa::Buffer,
-        window: &mut Option<DebugWindow>,
+        windows: &mut Vec<DebugWindow>,
     ) -> Option<[u8; 10]> {
-        let show_debug = self.prepare_debug_window(window);
+        let show_debug = self.prepare_debug_windows(windows);
         let rgb_img = frame
             .decode_image::<RgbFormat>()
             .unwrap_or_else(|_| ImageBuffer::new(self.width, self.height));
@@ -111,12 +111,12 @@ impl QrScanner {
             }
         }
 
-        self.process_luma_and_detect(window)
+        self.process_luma_and_detect(windows)
     }
 
     /// 内部核心逻辑：降频解码 + Debug 渲染
-    fn process_luma_and_detect(&mut self, window: &mut Option<DebugWindow>) -> Option<[u8; 10]> {
-        let update_window = matches!(window.as_ref(), Some(w) if w.is_open());
+    fn process_luma_and_detect(&mut self, windows: &mut Vec<DebugWindow>) -> Option<[u8; 10]> {
+        let update_window = !windows.is_empty();
 
         let mut found_id = None;
 
@@ -165,7 +165,7 @@ impl QrScanner {
 
         // 3. 将修改后的缓冲区推送到窗口 (60/30FPS 实时更新)
         if update_window {
-            if let Some(w) = window.as_mut() {
+            for w in windows.iter_mut() {
                 w.update(
                     &self.debug_buffer,
                     self.width as usize,
@@ -177,16 +177,9 @@ impl QrScanner {
         found_id
     }
 
-    fn prepare_debug_window(&mut self, window: &mut Option<DebugWindow>) -> bool {
-        if let Some(w) = window.as_mut() {
-            if w.is_open() {
-                return true;
-            }
-
-            *window = None;
-        }
-
-        false
+    fn prepare_debug_windows(&mut self, windows: &mut Vec<DebugWindow>) -> bool {
+        windows.retain(|w| w.is_open());
+        !windows.is_empty()
     }
 }
 
@@ -240,4 +233,27 @@ fn yuv_to_rgb0(y: u8, u: u8, v: u8) -> u32 {
 #[inline(always)]
 fn clamp_u8(value: i32) -> u8 {
     value.clamp(0, 255) as u8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fast_parse_aime_hex;
+
+    #[test]
+    fn fast_parse_aime_hex_parses_valid_value() {
+        assert_eq!(
+            fast_parse_aime_hex("0123456789ABCDEF0123"),
+            Some([0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23])
+        );
+    }
+
+    #[test]
+    fn fast_parse_aime_hex_rejects_invalid_length() {
+        assert_eq!(fast_parse_aime_hex("1234"), None);
+    }
+
+    #[test]
+    fn fast_parse_aime_hex_rejects_invalid_characters() {
+        assert_eq!(fast_parse_aime_hex("0123456789ABCDEG0123"), None);
+    }
 }

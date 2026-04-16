@@ -45,6 +45,9 @@ windowY=20
 ;调试窗口显示尺寸
 windowWidth=640
 windowHeight=480
+;指定哪些屏幕显示，留空表示全部屏幕
+;例如只在 0 号和 2 号屏幕显示：monitorIds=0,2
+monitorIds=
 ```
 
 ---

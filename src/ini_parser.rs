@@ -8,6 +8,13 @@ pub struct IniParser {
 }
 
 impl IniParser {
+    pub fn from_map(
+        path: std::path::PathBuf,
+        data: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    ) -> Self {
+        Self { path, data }
+    }
+
     fn read_ini_file(
         path: &std::path::Path,
     ) -> std::io::Result<std::collections::HashMap<String, std::collections::HashMap<String, String>>>
@@ -58,5 +65,31 @@ impl IniParser {
         self.get_string(section, key, "")
             .parse::<i32>()
             .unwrap_or(default)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::IniParser;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    #[test]
+    fn from_map_reads_existing_values() {
+        let mut section = HashMap::new();
+        section.insert("camId".to_string(), "7".to_string());
+
+        let mut data = HashMap::new();
+        data.insert("aimeio".to_string(), section);
+
+        let ini = IniParser::from_map(PathBuf::from("test.ini"), data);
+        assert_eq!(ini.get_int("aimeio", "camId", 0), 7);
+    }
+
+    #[test]
+    fn from_map_returns_defaults_for_missing_values() {
+        let ini = IniParser::from_map(PathBuf::from("test.ini"), HashMap::new());
+        assert_eq!(ini.get_string("aimeio", "missing", "fallback"), "fallback");
+        assert_eq!(ini.get_int("aimeio", "missing", 12), 12);
     }
 }
