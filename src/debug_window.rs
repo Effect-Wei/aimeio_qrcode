@@ -16,6 +16,7 @@ impl DebugWindow {
                 title: false,
                 resize: false,
                 topmost: true,
+                none: true,
                 ..WindowOptions::default()
             },
         )
