@@ -18,15 +18,19 @@ static RADIO_ON: AtomicBool = AtomicBool::new(true);
 static SHOW_WINDOW_FROM_LED: AtomicBool = AtomicBool::new(false);
 static LAST_LOGGED_CAM_ID: AtomicI32 = AtomicI32::new(i32::MIN);
 
-struct AimeResult {
+struct CardResult {
     aime_id_present: bool,
     aime_id: [u8; 10],
+    felica_id_present: bool,
+    felica_id: u64,
 }
 
-static AIME_RESULT: LazyLock<RwLock<AimeResult>> = LazyLock::new(|| {
-    RwLock::new(AimeResult {
+static CARD_RESULT: LazyLock<RwLock<CardResult>> = LazyLock::new(|| {
+    RwLock::new(CardResult {
         aime_id_present: false,
         aime_id: [0; 10],
+        felica_id_present: false,
+        felica_id: 0,
     })
 });
 
@@ -47,16 +51,29 @@ fn is_white_led(r: u8, g: u8, b: u8) -> bool {
 }
 
 fn clear_aime_result() {
-    if let Ok(mut res) = AIME_RESULT.write() {
+    if let Ok(mut res) = CARD_RESULT.write() {
         res.aime_id = [0; 10];
         res.aime_id_present = false;
+        res.felica_id = 0;
+        res.felica_id_present = false;
     }
 }
 
 fn store_aime_result(id: [u8; 10]) {
-    if let Ok(mut res) = AIME_RESULT.write() {
+    if let Ok(mut res) = CARD_RESULT.write() {
         res.aime_id = id;
         res.aime_id_present = true;
+        res.felica_id = 0;
+        res.felica_id_present = false;
+    }
+}
+
+fn store_felica_result(idm: u64) {
+    if let Ok(mut res) = CARD_RESULT.write() {
+        res.aime_id = [0; 10];
+        res.aime_id_present = false;
+        res.felica_id = idm;
+        res.felica_id_present = true;
     }
 }
 
@@ -72,7 +89,8 @@ fn init_camera_thread() {
     start_camera_thread(CameraWorkerHooks {
         get_config_snapshot: runtime_config,
         is_radio_on: || RADIO_ON.load(Ordering::SeqCst),
-        on_card_found: store_aime_result,
+        on_aime_found: store_aime_result,
+        on_felica_found: store_felica_result,
         on_card_lost: clear_aime_result,
     });
 }
@@ -122,21 +140,35 @@ pub unsafe extern "C" fn aime_io_nfc_get_aime_id(
             return Err(AimeError::InvalidArg);
         }
 
-        let aime_result = AIME_RESULT.read().map_err(|_| AimeError::Fail)?;
-        if !aime_result.aime_id_present {
+        let card_result = CARD_RESULT.read().map_err(|_| AimeError::Fail)?;
+        if !card_result.aime_id_present {
             return Err(AimeError::NotPresent);
         }
 
         unsafe {
-            std::ptr::copy_nonoverlapping(aime_result.aime_id.as_ptr(), luid, 10);
+            std::ptr::copy_nonoverlapping(card_result.aime_id.as_ptr(), luid, 10);
         }
         Ok(())
     })
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn aime_io_nfc_get_felica_id(_unit_no: u8, _idm: *mut u64) -> HRESULT {
-    ffi_catch(|| Err(AimeError::NotPresent))
+pub unsafe extern "C" fn aime_io_nfc_get_felica_id(_unit_no: u8, idm: *mut u64) -> HRESULT {
+    ffi_catch(|| {
+        if idm.is_null() {
+            return Err(AimeError::InvalidArg);
+        }
+
+        let card_result = CARD_RESULT.read().map_err(|_| AimeError::Fail)?;
+        if !card_result.felica_id_present {
+            return Err(AimeError::NotPresent);
+        }
+
+        unsafe {
+            *idm = card_result.felica_id;
+        }
+        Ok(())
+    })
 }
 
 #[unsafe(no_mangle)]

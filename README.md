@@ -1,6 +1,11 @@
 # 🦀 aimeio_qrcode
 
-本项目是 Sbgatools 环境下的 `AimeIO` 实现，可解析摄像头画面中的 `Access Code` 二维码并传入 Sbgatools。
+本项目是 Sbgatools 环境下的 `AimeIO` 实现，可解析摄像头画面中的二维码并传入 Sbgatools。
+
+当前支持的二维码内容格式只有两种：
+
+* `20` 位纯数字：按 Aime `Access Code` 处理
+* `16` 位十六进制：按 FeliCa `IDm` 处理
 
 ## ✨ 核心特性与架构优势
 
@@ -55,12 +60,12 @@ monitorIds=
 ## 🧪 DLL 本地测试工具
 
 仓库内附带了一个临时测试用的小工具：`dll_tester`。  
-它的用途是脱离游戏或 Sbgatools 宿主，直接在命令行里加载本项目编译出的 DLL，并循环读取当前识别到的 Aime ID，方便单独排查：
+它的用途是脱离游戏或 Sbgatools 宿主，直接在命令行里加载本项目编译出的 DLL，并循环读取当前识别到的卡信息，方便单独排查：
 
 * DLL 是否能正常加载
 * `aime_io_init` 是否成功
 * 摄像头和二维码识别链路是否工作
-* `aime_io_nfc_get_aime_id` 是否能稳定返回结果
+* `aime_io_nfc_get_aime_id` / `aime_io_nfc_get_felica_id` 是否能稳定返回结果
 
 ### 编译 tester
 
@@ -80,7 +85,7 @@ cargo run --bin dll_tester -- --cam-id 0 --show-window
 * 自动生成一个临时 `segatools.ini`
 * 调用 `aime_io_init`
 * 打开调试窗口
-* 持续读取并打印识别到的 Aime ID
+* 持续读取并打印识别到的 Aime Access Code 或 FeliCa IDm
 
 ### 指定 DLL 路径
 
@@ -97,7 +102,7 @@ cargo run --bin dll_tester -- --dll .\target\debug\aimeio_qrcode.dll --cam-id 0 
 * `--show-window`：打开调试窗口，显示摄像头画面
 * `--list-cameras`：初始化时让 DLL 打印系统识别到的摄像头
 * `--unit <id>`：指定传给 NFC 接口的 unit 编号，默认是 `0`
-* `--interval-ms <ms>`：设置读取 Aime ID 的轮询间隔，默认是 `200`
+* `--interval-ms <ms>`：设置读取卡号的轮询间隔，默认是 `200`
 * `--poll-ms <ms>`：定期调用 `aime_io_nfc_poll`，适合测试配置热更新路径
 
 ### 查看帮助

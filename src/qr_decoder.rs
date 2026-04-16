@@ -6,6 +6,12 @@ use nokhwa::utils::FrameFormat;
 use rqrr::PreparedImage;
 use std::time::{Duration, Instant};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DecodedCard {
+    Aime([u8; 10]),
+    Felica(u64),
+}
+
 /// 扫码器实例，持有预分配的缓冲区以实现零内存分配 (Zero-Allocation)
 pub struct QrScanner {
     width: u32,
@@ -35,7 +41,7 @@ impl QrScanner {
         &mut self,
         frame: &nokhwa::Buffer,
         windows: &mut Vec<DebugWindow>,
-    ) -> Option<[u8; 10]> {
+    ) -> Option<DecodedCard> {
         if frame.source_frame_format() == FrameFormat::YUYV {
             self.decode_qr_yuyv(frame, windows)
         } else {
@@ -48,7 +54,7 @@ impl QrScanner {
         &mut self,
         frame: &nokhwa::Buffer,
         windows: &mut Vec<DebugWindow>,
-    ) -> Option<[u8; 10]> {
+    ) -> Option<DecodedCard> {
         let yuyv_buffer = frame.buffer();
         let format = frame.source_frame_format();
         if format != FrameFormat::YUYV {
@@ -91,7 +97,7 @@ impl QrScanner {
         &mut self,
         frame: &nokhwa::Buffer,
         windows: &mut Vec<DebugWindow>,
-    ) -> Option<[u8; 10]> {
+    ) -> Option<DecodedCard> {
         let show_debug = self.prepare_debug_windows(windows);
         let rgb_img = frame
             .decode_image::<RgbFormat>()
@@ -115,7 +121,7 @@ impl QrScanner {
     }
 
     /// 内部核心逻辑：降频解码 + Debug 渲染
-    fn process_luma_and_detect(&mut self, windows: &mut Vec<DebugWindow>) -> Option<[u8; 10]> {
+    fn process_luma_and_detect(&mut self, windows: &mut Vec<DebugWindow>) -> Option<DecodedCard> {
         let update_window = !windows.is_empty();
 
         let mut found_id = None;
@@ -156,7 +162,7 @@ impl QrScanner {
                     // 尽早短路解码
                     if found_id.is_none() {
                         if let Ok((_meta, content)) = grid.decode() {
-                            found_id = fast_parse_aime_hex(&content);
+                            found_id = parse_card_payload(&content);
                         }
                     }
                 }
@@ -185,8 +191,20 @@ impl QrScanner {
 
 /* ----- 辅助函数 ----- */
 
-/// 超快速 Aime Hex 字符串解析器 (零分配，无边界检查)
-fn fast_parse_aime_hex(content: &str) -> Option<[u8; 10]> {
+fn parse_card_payload(content: &str) -> Option<DecodedCard> {
+    let trimmed = content.trim();
+    if trimmed.len() == 20 && trimmed.as_bytes().iter().all(|c| c.is_ascii_digit()) {
+        return parse_aime_access_code(trimmed).map(DecodedCard::Aime);
+    }
+
+    if trimmed.len() == 16 {
+        return parse_felica_idm(trimmed).map(DecodedCard::Felica);
+    }
+
+    None
+}
+
+fn parse_aime_access_code(content: &str) -> Option<[u8; 10]> {
     let bytes = content.as_bytes();
     if bytes.len() != 20 {
         return None;
@@ -194,11 +212,35 @@ fn fast_parse_aime_hex(content: &str) -> Option<[u8; 10]> {
 
     let mut res = [0u8; 10];
     for i in 0..10 {
+        let hi = decimal_char_to_val(bytes[i * 2])?;
+        let lo = decimal_char_to_val(bytes[i * 2 + 1])?;
+        res[i] = (hi << 4) | lo;
+    }
+    Some(res)
+}
+
+fn parse_felica_idm(content: &str) -> Option<u64> {
+    let bytes = content.as_bytes();
+    if bytes.len() != 16 {
+        return None;
+    }
+
+    let mut res = [0u8; 8];
+    for i in 0..8 {
         let hi = hex_char_to_val(bytes[i * 2])?;
         let lo = hex_char_to_val(bytes[i * 2 + 1])?;
         res[i] = (hi << 4) | lo;
     }
-    Some(res)
+
+    Some(u64::from_be_bytes(res))
+}
+
+#[inline(always)]
+fn decimal_char_to_val(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        _ => None,
+    }
 }
 
 /// 辅助函数：ASCII 字符转 Hex 值
@@ -237,23 +279,38 @@ fn clamp_u8(value: i32) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use super::fast_parse_aime_hex;
+    use super::{DecodedCard, parse_card_payload};
 
     #[test]
-    fn fast_parse_aime_hex_parses_valid_value() {
+    fn parse_card_payload_parses_aime_access_code() {
         assert_eq!(
-            fast_parse_aime_hex("0123456789ABCDEF0123"),
-            Some([0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23])
+            parse_card_payload("01234567890123456789"),
+            Some(DecodedCard::Aime([
+                0x01, 0x23, 0x45, 0x67, 0x89, 0x01, 0x23, 0x45, 0x67, 0x89,
+            ]))
         );
     }
 
     #[test]
-    fn fast_parse_aime_hex_rejects_invalid_length() {
-        assert_eq!(fast_parse_aime_hex("1234"), None);
+    fn parse_card_payload_parses_felica_idm() {
+        assert_eq!(
+            parse_card_payload("0123456789ABCDEF"),
+            Some(DecodedCard::Felica(0x0123456789ABCDEF))
+        );
     }
 
     #[test]
-    fn fast_parse_aime_hex_rejects_invalid_characters() {
-        assert_eq!(fast_parse_aime_hex("0123456789ABCDEG0123"), None);
+    fn parse_card_payload_rejects_invalid_length() {
+        assert_eq!(parse_card_payload("1234"), None);
+    }
+
+    #[test]
+    fn parse_card_payload_rejects_non_decimal_access_code() {
+        assert_eq!(parse_card_payload("0123456789ABCDE12345"), None);
+    }
+
+    #[test]
+    fn parse_card_payload_rejects_invalid_felica_characters() {
+        assert_eq!(parse_card_payload("0123456789ABCDEG"), None);
     }
 }

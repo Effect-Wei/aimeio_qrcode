@@ -3,7 +3,7 @@ use crate::config::{
 };
 use crate::debug_window::DebugWindow;
 use crate::display::{create_debug_windows, sync_debug_windows};
-use crate::qr_decoder::QrScanner;
+use crate::qr_decoder::{DecodedCard, QrScanner};
 
 use std::thread;
 use std::time::{Duration, Instant};
@@ -19,16 +19,18 @@ pub const CAM_WIDTH: u32 = 640;
 pub const CAM_HEIGHT: u32 = 480;
 pub const FPS: u32 = 30;
 
-pub struct CameraWorkerHooks<GetConfigSnapshot, IsRadioOn, OnCardFound, OnCardLost>
+pub struct CameraWorkerHooks<GetConfigSnapshot, IsRadioOn, OnAimeFound, OnFelicaFound, OnCardLost>
 where
     GetConfigSnapshot: Fn() -> ConfigSnapshot + Send + 'static,
     IsRadioOn: Fn() -> bool + Send + 'static,
-    OnCardFound: Fn([u8; 10]) + Send + 'static,
+    OnAimeFound: Fn([u8; 10]) + Send + 'static,
+    OnFelicaFound: Fn(u64) + Send + 'static,
     OnCardLost: Fn() + Send + 'static,
 {
     pub get_config_snapshot: GetConfigSnapshot,
     pub is_radio_on: IsRadioOn,
-    pub on_card_found: OnCardFound,
+    pub on_aime_found: OnAimeFound,
+    pub on_felica_found: OnFelicaFound,
     pub on_card_lost: OnCardLost,
 }
 
@@ -60,12 +62,13 @@ pub fn enumerate_cameras() {
     }
 }
 
-pub fn start_camera_thread<GetConfigSnapshot, IsRadioOn, OnCardFound, OnCardLost>(
-    hooks: CameraWorkerHooks<GetConfigSnapshot, IsRadioOn, OnCardFound, OnCardLost>,
+pub fn start_camera_thread<GetConfigSnapshot, IsRadioOn, OnAimeFound, OnFelicaFound, OnCardLost>(
+    hooks: CameraWorkerHooks<GetConfigSnapshot, IsRadioOn, OnAimeFound, OnFelicaFound, OnCardLost>,
 ) where
     GetConfigSnapshot: Fn() -> ConfigSnapshot + Send + 'static,
     IsRadioOn: Fn() -> bool + Send + 'static,
-    OnCardFound: Fn([u8; 10]) + Send + 'static,
+    OnAimeFound: Fn([u8; 10]) + Send + 'static,
+    OnFelicaFound: Fn(u64) + Send + 'static,
     OnCardLost: Fn() + Send + 'static,
 {
     let frame_duration = Duration::from_secs_f32(1.0 / FPS as f32);
@@ -121,7 +124,8 @@ pub fn start_camera_thread<GetConfigSnapshot, IsRadioOn, OnCardFound, OnCardLost
                             &mut absent_count,
                             radio_on,
                             show_window,
-                            &hooks.on_card_found,
+                            &hooks.on_aime_found,
+                            &hooks.on_felica_found,
                             &hooks.on_card_lost,
                         );
                     }
@@ -166,25 +170,30 @@ fn init_camera(index: i32) -> Result<Camera, String> {
     Ok(camera)
 }
 
-fn process_frame<OnCardFound, OnCardLost>(
+fn process_frame<OnAimeFound, OnFelicaFound, OnCardLost>(
     scanner: &mut QrScanner,
     frame: &Buffer,
     windows: &mut Vec<DebugWindow>,
     absent_count: &mut u32,
     radio_on: bool,
     show_window: bool,
-    on_card_found: &OnCardFound,
+    on_aime_found: &OnAimeFound,
+    on_felica_found: &OnFelicaFound,
     on_card_lost: &OnCardLost,
 ) where
-    OnCardFound: Fn([u8; 10]),
+    OnAimeFound: Fn([u8; 10]),
+    OnFelicaFound: Fn(u64),
     OnCardLost: Fn(),
 {
     if radio_on {
-        let found_id = scanner.decode_qr(frame, windows);
+        let found_card = scanner.decode_qr(frame, windows);
 
-        if let Some(id) = found_id {
+        if let Some(card) = found_card {
             *absent_count = 0;
-            on_card_found(id);
+            match card {
+                DecodedCard::Aime(id) => on_aime_found(id),
+                DecodedCard::Felica(idm) => on_felica_found(idm),
+            }
         } else {
             *absent_count = absent_count.saturating_add(1);
             if *absent_count >= CARD_ABSENT_FRAME_LIMIT {

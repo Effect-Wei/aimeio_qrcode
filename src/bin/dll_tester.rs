@@ -28,6 +28,7 @@ mod app {
     type InitFn = unsafe extern "C" fn() -> Hresult;
     type PollFn = unsafe extern "C" fn(u8) -> Hresult;
     type GetAimeIdFn = unsafe extern "C" fn(u8, *mut u8, usize) -> Hresult;
+    type GetFelicaIdFn = unsafe extern "C" fn(u8, *mut u64) -> Hresult;
     type RadioFn = unsafe extern "C" fn(u8) -> Hresult;
 
     #[link(name = "kernel32")]
@@ -139,6 +140,7 @@ mod app {
         init: InitFn,
         poll: PollFn,
         get_aime_id: GetAimeIdFn,
+        get_felica_id: GetFelicaIdFn,
         radio_on: RadioFn,
     }
 
@@ -156,6 +158,8 @@ mod app {
             let poll = unsafe { load_symbol::<PollFn>(module, "aime_io_nfc_poll")? };
             let get_aime_id =
                 unsafe { load_symbol::<GetAimeIdFn>(module, "aime_io_nfc_get_aime_id")? };
+            let get_felica_id =
+                unsafe { load_symbol::<GetFelicaIdFn>(module, "aime_io_nfc_get_felica_id")? };
             let radio_on = unsafe { load_symbol::<RadioFn>(module, "aime_io_nfc_radio_on")? };
 
             Ok(Self {
@@ -164,6 +168,7 @@ mod app {
                 init,
                 poll,
                 get_aime_id,
+                get_felica_id,
                 radio_on,
             })
         }
@@ -223,9 +228,15 @@ mod app {
         options: &Options,
         mut poll_state: Option<(Duration, Instant)>,
     ) -> Result<(), String> {
-        println!("Reading aime IDs. Press Ctrl+C to stop.");
+        println!("Reading card IDs. Press Ctrl+C to stop.");
 
-        let mut last_seen = None;
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum SeenCard {
+            Aime([u8; 10]),
+            Felica(u64),
+        }
+
+        let mut last_seen: Option<SeenCard> = None;
 
         loop {
             if let Some((interval, last_poll)) = poll_state.as_mut() {
@@ -237,25 +248,41 @@ mod app {
             }
 
             let mut aime_id = [0u8; 10];
-            let hr =
+            let aime_hr =
                 unsafe { (dll.get_aime_id)(options.unit_no, aime_id.as_mut_ptr(), aime_id.len()) };
+            let mut felica_id = 0u64;
+            let felica_hr = unsafe { (dll.get_felica_id)(options.unit_no, &mut felica_id) };
 
-            match hr {
-                S_OK => {
-                    if last_seen != Some(aime_id) {
+            match (aime_hr, felica_hr) {
+                (S_OK, _) => {
+                    let seen = SeenCard::Aime(aime_id);
+                    if last_seen != Some(seen) {
                         println!("Aime ID detected: {}", format_hex(&aime_id));
-                        last_seen = Some(aime_id);
+                        last_seen = Some(seen);
                     }
                 }
-                S_FALSE => {
+                (S_FALSE, S_OK) => {
+                    let seen = SeenCard::Felica(felica_id);
+                    if last_seen != Some(seen) {
+                        println!("FeliCa IDm detected: {:016X}", felica_id);
+                        last_seen = Some(seen);
+                    }
+                }
+                (S_FALSE, S_FALSE) => {
                     if last_seen.take().is_some() {
-                        println!("Aime ID removed");
+                        println!("Card removed");
                     }
                 }
-                _ => {
+                (_, felica_error) if felica_error != S_FALSE && felica_error != S_OK => {
+                    return Err(format!(
+                        "aime_io_nfc_get_felica_id failed: {}",
+                        describe_hresult(felica_error)
+                    ));
+                }
+                (aime_error, _) => {
                     return Err(format!(
                         "aime_io_nfc_get_aime_id failed: {}",
-                        describe_hresult(hr)
+                        describe_hresult(aime_error)
                     ));
                 }
             }
