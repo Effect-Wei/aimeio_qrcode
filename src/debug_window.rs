@@ -6,14 +6,31 @@ pub struct DebugWindow {
 }
 
 impl DebugWindow {
-    pub fn new(width: usize, height: usize, fps: usize) -> Option<Self> {
-        let mut w = Window::new("AimeIO QR", width, height, WindowOptions::default()).ok()?;
+    pub fn new(width: usize, height: usize, fps: usize, x: isize, y: isize) -> Option<Self> {
+        let mut w = Window::new(
+            "AimeIO QR",
+            width,
+            height,
+            WindowOptions {
+                borderless: true,
+                title: false,
+                resize: false,
+                topmost: true,
+                ..WindowOptions::default()
+            },
+        )
+        .ok()?;
         w.set_target_fps(fps);
+        w.set_position(x, y);
         Some(Self { window: w })
     }
 
     pub fn is_open(&self) -> bool {
         self.window.is_open()
+    }
+
+    pub fn set_position(&mut self, x: isize, y: isize) {
+        self.window.set_position(x, y);
     }
 
     pub fn update(&mut self, buf: &[u32], width: usize, height: usize) {

@@ -39,6 +39,9 @@ listCameras=0
 ;同时在游戏调用 aime_io_led_set_color 且灯色为白色时，
 ;也会自动临时显示该窗口
 showWindow=1
+;调试窗口的屏幕坐标（左上角）
+windowX=20
+windowY=20
 ```
 
 ---

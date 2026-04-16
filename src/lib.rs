@@ -32,6 +32,8 @@ static RADIO_ON: AtomicBool = AtomicBool::new(true);
 static SHOW_WINDOW: AtomicBool = AtomicBool::new(false);
 static SHOW_WINDOW_FROM_LED: AtomicBool = AtomicBool::new(false);
 static CAM_ID: AtomicI32 = AtomicI32::new(0);
+static WINDOW_X: AtomicI32 = AtomicI32::new(20);
+static WINDOW_Y: AtomicI32 = AtomicI32::new(20);
 
 struct AimeResult {
     aime_id_present: bool,
@@ -119,11 +121,22 @@ fn should_show_window() -> bool {
     SHOW_WINDOW.load(Ordering::SeqCst) || SHOW_WINDOW_FROM_LED.load(Ordering::SeqCst)
 }
 
+fn window_position() -> (isize, isize) {
+    (
+        WINDOW_X.load(Ordering::SeqCst) as isize,
+        WINDOW_Y.load(Ordering::SeqCst) as isize,
+    )
+}
+
 fn sync_debug_window(window: &mut Option<DebugWindow>) {
     let is_open = matches!(window.as_ref(), Some(w) if w.is_open());
     if should_show_window() {
         if !is_open {
-            *window = DebugWindow::new(CAM_WIDTH as usize, CAM_HEIGHT as usize, FPS as usize);
+            let (x, y) = window_position();
+            *window = DebugWindow::new(CAM_WIDTH as usize, CAM_HEIGHT as usize, FPS as usize, x, y);
+        } else if let Some(w) = window.as_mut() {
+            let (x, y) = window_position();
+            w.set_position(x, y);
         }
     } else if window.is_some() {
         *window = None;
@@ -140,7 +153,8 @@ fn init_camera_thread() {
 
     thread::spawn(move || {
         let mut window = if should_show_window() {
-            DebugWindow::new(CAM_WIDTH as usize, CAM_HEIGHT as usize, FPS as usize)
+            let (x, y) = window_position();
+            DebugWindow::new(CAM_WIDTH as usize, CAM_HEIGHT as usize, FPS as usize, x, y)
         } else {
             None
         };
@@ -257,6 +271,14 @@ pub extern "C" fn aime_io_init() -> HRESULT {
             INI.read().unwrap().get_int("aimeio", "listCameras", 0) == 1,
             Ordering::SeqCst,
         );
+        WINDOW_X.store(
+            INI.read().unwrap().get_int("aimeio", "windowX", 20),
+            Ordering::SeqCst,
+        );
+        WINDOW_Y.store(
+            INI.read().unwrap().get_int("aimeio", "windowY", 20),
+            Ordering::SeqCst,
+        );
 
         if INITIALIZED.load(Ordering::SeqCst) {
             return Ok(());
@@ -284,6 +306,14 @@ pub extern "C" fn aime_io_nfc_poll(_unit_no: u8) -> HRESULT {
         );
         SHOW_WINDOW.store(
             INI.read().unwrap().get_int("aimeio", "showWindow", 0) == 1,
+            Ordering::SeqCst,
+        );
+        WINDOW_X.store(
+            INI.read().unwrap().get_int("aimeio", "windowX", 20),
+            Ordering::SeqCst,
+        );
+        WINDOW_Y.store(
+            INI.read().unwrap().get_int("aimeio", "windowY", 20),
             Ordering::SeqCst,
         );
         println!(
