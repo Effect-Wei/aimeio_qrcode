@@ -34,6 +34,8 @@ static SHOW_WINDOW_FROM_LED: AtomicBool = AtomicBool::new(false);
 static CAM_ID: AtomicI32 = AtomicI32::new(0);
 static WINDOW_X: AtomicI32 = AtomicI32::new(20);
 static WINDOW_Y: AtomicI32 = AtomicI32::new(20);
+static WINDOW_WIDTH: AtomicI32 = AtomicI32::new(CAM_WIDTH as i32);
+static WINDOW_HEIGHT: AtomicI32 = AtomicI32::new(CAM_HEIGHT as i32);
 
 struct AimeResult {
     aime_id_present: bool,
@@ -128,12 +130,24 @@ fn window_position() -> (isize, isize) {
     )
 }
 
+fn window_size() -> (usize, usize) {
+    let width = WINDOW_WIDTH.load(Ordering::SeqCst).max(1) as usize;
+    let height = WINDOW_HEIGHT.load(Ordering::SeqCst).max(1) as usize;
+    (width, height)
+}
+
 fn sync_debug_window(window: &mut Option<DebugWindow>) {
     let is_open = matches!(window.as_ref(), Some(w) if w.is_open());
+    let (width, height) = window_size();
     if should_show_window() {
-        if !is_open {
+        let needs_resize = matches!(window.as_ref(), Some(w) if w.size() != (width, height));
+        if needs_resize {
+            *window = None;
+        }
+
+        if !is_open || needs_resize {
             let (x, y) = window_position();
-            *window = DebugWindow::new(CAM_WIDTH as usize, CAM_HEIGHT as usize, FPS as usize, x, y);
+            *window = DebugWindow::new(width, height, FPS as usize, x, y);
         } else if let Some(w) = window.as_mut() {
             let (x, y) = window_position();
             w.set_position(x, y);
@@ -154,7 +168,8 @@ fn init_camera_thread() {
     thread::spawn(move || {
         let mut window = if should_show_window() {
             let (x, y) = window_position();
-            DebugWindow::new(CAM_WIDTH as usize, CAM_HEIGHT as usize, FPS as usize, x, y)
+            let (width, height) = window_size();
+            DebugWindow::new(width, height, FPS as usize, x, y)
         } else {
             None
         };
@@ -279,6 +294,20 @@ pub extern "C" fn aime_io_init() -> HRESULT {
             INI.read().unwrap().get_int("aimeio", "windowY", 20),
             Ordering::SeqCst,
         );
+        WINDOW_WIDTH.store(
+            INI.read()
+                .unwrap()
+                .get_int("aimeio", "windowWidth", CAM_WIDTH as i32)
+                .max(1),
+            Ordering::SeqCst,
+        );
+        WINDOW_HEIGHT.store(
+            INI.read()
+                .unwrap()
+                .get_int("aimeio", "windowHeight", CAM_HEIGHT as i32)
+                .max(1),
+            Ordering::SeqCst,
+        );
 
         if INITIALIZED.load(Ordering::SeqCst) {
             return Ok(());
@@ -314,6 +343,20 @@ pub extern "C" fn aime_io_nfc_poll(_unit_no: u8) -> HRESULT {
         );
         WINDOW_Y.store(
             INI.read().unwrap().get_int("aimeio", "windowY", 20),
+            Ordering::SeqCst,
+        );
+        WINDOW_WIDTH.store(
+            INI.read()
+                .unwrap()
+                .get_int("aimeio", "windowWidth", CAM_WIDTH as i32)
+                .max(1),
+            Ordering::SeqCst,
+        );
+        WINDOW_HEIGHT.store(
+            INI.read()
+                .unwrap()
+                .get_int("aimeio", "windowHeight", CAM_HEIGHT as i32)
+                .max(1),
             Ordering::SeqCst,
         );
         println!(

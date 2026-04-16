@@ -2,6 +2,9 @@ use minifb::{Window, WindowOptions};
 use rqrr::Point;
 
 pub struct DebugWindow {
+    width: usize,
+    height: usize,
+    scaled_buffer: Vec<u32>,
     window: Window,
 }
 
@@ -23,11 +26,20 @@ impl DebugWindow {
         .ok()?;
         w.set_target_fps(fps);
         w.set_position(x, y);
-        Some(Self { window: w })
+        Some(Self {
+            width,
+            height,
+            scaled_buffer: vec![0; width * height],
+            window: w,
+        })
     }
 
     pub fn is_open(&self) -> bool {
         self.window.is_open()
+    }
+
+    pub fn size(&self) -> (usize, usize) {
+        (self.width, self.height)
     }
 
     pub fn set_position(&mut self, x: isize, y: isize) {
@@ -35,7 +47,48 @@ impl DebugWindow {
     }
 
     pub fn update(&mut self, buf: &[u32], width: usize, height: usize) {
-        self.window.update_with_buffer(buf, width, height).ok();
+        if width == self.width && height == self.height {
+            self.window
+                .update_with_buffer(buf, self.width, self.height)
+                .ok();
+            return;
+        }
+
+        scale_buffer_nearest(
+            buf,
+            width,
+            height,
+            &mut self.scaled_buffer,
+            self.width,
+            self.height,
+        );
+        self.window
+            .update_with_buffer(&self.scaled_buffer, self.width, self.height)
+            .ok();
+    }
+}
+
+fn scale_buffer_nearest(
+    src: &[u32],
+    src_width: usize,
+    src_height: usize,
+    dst: &mut [u32],
+    dst_width: usize,
+    dst_height: usize,
+) {
+    if src_width == 0 || src_height == 0 || dst_width == 0 || dst_height == 0 {
+        return;
+    }
+
+    for y in 0..dst_height {
+        let src_y = y * src_height / dst_height;
+        let dst_row = y * dst_width;
+        let src_row = src_y * src_width;
+
+        for x in 0..dst_width {
+            let src_x = x * src_width / dst_width;
+            dst[dst_row + x] = src[src_row + src_x];
+        }
     }
 }
 

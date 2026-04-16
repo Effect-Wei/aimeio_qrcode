@@ -42,6 +42,9 @@ showWindow=1
 ;调试窗口的屏幕坐标（左上角）
 windowX=20
 windowY=20
+;调试窗口显示尺寸
+windowWidth=640
+windowHeight=480
 ```
 
 ---
